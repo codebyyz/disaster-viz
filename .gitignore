@@ -1,2 +1,11 @@
+# Python
 venv/
 __pycache__/
+*.pyc
+
+# Dev backups
+*.bak
+
+# Node (frontend has its own .gitignore too)
+node_modules/
+dist/
