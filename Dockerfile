@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # 两阶段构建：
 #   1) builder —— 装依赖、编译前端静态资源（产物留在镜像中间层，不进最终镜像）
 #   2) runtime —— 只放 venv + 构建产物，镜像更小、攻击面更小

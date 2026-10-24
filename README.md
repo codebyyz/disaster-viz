@@ -139,7 +139,7 @@ source venv/bin/activate && uvicorn backend.main:app --port 8000
 - [x] **W1** FastAPI 接入 USGS，浏览器可见 JSON
 - [x] **W2** React + Leaflet 地图打点
 - [x] **W3** 交互完善（时间窗口 / 震级筛选 / 详情链接）+ Docker 化
-  - [ ] 待办：Docker 环境跑通 `docker compose up`（见下方「已知问题」）
+  - 容器已实跑验证（2026-10-24）：镜像 220 MB，healthcheck healthy，非 root 用户，全链路 4/4 通过
 - [ ] **W4** PostgreSQL / PostGIS 落库 + 文档
 - [ ] 第二版：接入 NASA FIRMS 野火数据
 - [ ] 第三版：北欧 / 加拿大区域多灾种数据（雪崩 / 冻土）
@@ -162,9 +162,23 @@ source venv/bin/activate && python scripts/net_check.py
 - 给 WSL 配可用的 DNS（`/etc/wsl.conf` 中 `generateResolvConf=false` + 自定义 nameserver），或用 VPN 的 TUN 模式；
 - 换用离线底图或自建瓦片服务（长期方案，但超出第一版范围）。
 
-### 2. Docker 尚未安装
+### 2. Docker 镜像拉取需要镜像加速
 
-W3 的镜像/编排文件已就绪，但本机 WSL 里还没有 Docker。安装见 `scripts/docker-install-one-time.ps1`（Windows 管理员 PowerShell 执行 Docker Desktop），装完后在 Settings → Resources → WSL Integration 里启用 Ubuntu-24.04。
+Docker Hub 直连超时。Docker Desktop → Settings → Docker Engine 里配置了 `registry-mirrors`（DaoCloud / 1ms.run / dockerproxy.net）。镜像站可用性会变，拉不下来时跑 `scripts/test-registry.ps1` 排查。
+
+注意：Docker Desktop 不读系统 `HTTP_PROXY` 环境变量，它有自己的代理设置。
+
+### 3. Docker 数据目录仍在 C 盘
+
+Docker Desktop 装在 `D:\Docker`，但镜像/容器数据（`docker_data.vhdx`）默认在 `C:\Users\Chen\AppData\Local\Docker\wsl\disk\`，迁移到 D 盘失败（`D:\` 根目录 ACL 不允许普通用户写入）。
+
+修复方法（管理员 PowerShell）：
+
+```powershell
+icacls "D:\DockerData" /grant "DESKTOP-PC9A1Q2\Chen YunZhuo:(OI)(CI)F"
+```
+
+然后在 Docker Desktop → Resources → Advanced 把 Disk image location 设为 `D:\DockerData`。
 
 ## 开发备注
 
