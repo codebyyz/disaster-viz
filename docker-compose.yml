@@ -1,0 +1,17 @@
+# 本地开发只需要一条命令：docker compose up
+# 浏览器访问 http://localhost:8000 —— 前端静态资源和 API 由同一个容器提供。
+#
+# 注意：这里是「单容器」编排，不是微服务拆分。
+# W3 的目标是先把"一键起"跑通；等到 W4 接 PostgreSQL 时，
+# 才会出现第二个服务（db），那时才能体现 compose 的真正价值。
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: disaster-viz:dev
+    container_name: disaster-viz-app
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

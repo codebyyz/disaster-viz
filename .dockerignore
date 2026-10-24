@@ -1,0 +1,12 @@
+# 构建上下文瘦身：这些目录永远不需要进镜像
+.git
+venv
+__pycache__
+*.pyc
+*.bak
+node_modules
+frontend/node_modules
+frontend/dist
+docs
+scripts
+*.md

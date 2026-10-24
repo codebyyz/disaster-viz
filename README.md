@@ -10,6 +10,8 @@
 
 - 圆点大小 / 颜色随震级变化
   - `M < 3` 浅黄 · `M 3-5` 橙 · `M 5-6` 深橙 · `M 6+` 红
+- 顶部可按**时间窗口**（24h / 7d / 30d / 90d）和**最小震级**筛选，筛选参数直接透传给 USGS
+- 右侧实时统计：当前数据集中的最强震、平均震源深度
 
 ## 技术栈
 
@@ -18,6 +20,7 @@
 | 后端 | Python 3.12 + FastAPI + httpx |
 | 前端 | React 19 + Vite + Leaflet / react-leaflet |
 | 数据 | USGS Earthquake API（免注册） |
+| 容器 | Docker 多阶段构建 + docker compose |
 
 **架构为「数据源 → 后端 → 地图」**。第二版接入 NASA FIRMS 野火数据时，只需替换 / 新增一个 adapter，后端接口与前端地图无需改动。
 
@@ -25,66 +28,90 @@
 
 ```
 disaster-viz/
-├── main.py                 # FastAPI 服务：/ 和 /earthquakes
-├── requirements.txt        # Python 依赖
+├── backend/
+│   ├── main.py             # FastAPI 应用：/ /health /earthquakes + 静态挂载
+│   └── web.py              # 前端构建产物路径（DIST_DIR）
 ├── frontend/               # React 前端
 │   ├── src/
-│   │   ├── App.jsx         # 地图组件（核心）
+│   │   ├── App.jsx         # 地图 + 筛选栏（核心）
 │   │   ├── App.css         # 布局与样式
 │   │   └── index.css       # 全局基础样式
-│   └── package.json
-└── .gitignore
+│   └── vite.config.js      # dev server 把 /earthquakes 代理到 :8000
+├── scripts/
+│   ├── sync.sh             # 把改动从 Windows 工作区同步到 WSL
+│   ├── dev_restart.sh      # 重启本地后端 + 冒烟
+│   ├── smoke_test.py       # 全链路测试（健康 / 数据 / 筛选）
+│   └── net_check.py        # 外网依赖可达性诊断
+├── Dockerfile              # 两阶段构建：Node 构建前端 → Python 运行
+├── docker-compose.yml
+└── requirements.txt
 ```
-
-## 环境要求
-
-- WSL2 + Ubuntu 24.04（Windows 下开发）
-- Python 3.12
-- Node.js >= 22.12（Vite 8 要求）
 
 ## 启动方式
 
-### 1. 后端（端口 8000）
+### 方式 A：Docker（推荐，一条命令）
+
+```bash
+cd ~/disaster-viz
+docker compose up --build
+```
+
+浏览器打开 **http://localhost:8000** —— 前端页面和 API 在同一个端口。
+
+停止：`Ctrl+C`，或 `docker compose down`。
+
+### 方式 B：本地开发（热更新）
+
+需要两个终端。
+
+终端 1（后端，端口 8000）：
 
 ```bash
 cd ~/disaster-viz
 source venv/bin/activate
-uvicorn main:app --reload
+uvicorn backend.main:app --reload
 ```
 
-验证：`http://localhost:8000/earthquakes?limit=3`
-
-### 2. 前端（端口 5173）
-
-新开一个终端：
+终端 2（前端，端口 5173）：
 
 ```bash
 cd ~/disaster-viz/frontend
 npm run dev
 ```
 
-浏览器打开 `http://localhost:5173`
+浏览器打开 `http://localhost:5173`。前端请求 `/earthquakes` 由 Vite 代理到 `:8000`，所以**不需要 CORS，也不需要改代码**。
 
-> ⚠️ **两个服务都要开着**。前端从 `http://localhost:8000` 拉数据。
+### 方式 C：单端口跑构建产物（不起 Docker）
+
+```bash
+cd ~/disaster-viz/frontend && npm run build && cd ..
+source venv/bin/activate && uvicorn backend.main:app --port 8000
+```
+
+打开 `http://localhost:8000`。
 
 ## API
 
 ### `GET /`
 
-服务状态。
+前端已构建时返回页面；未构建时返回服务状态。
+
+### `GET /health`
+
+存活探测，给 Docker healthcheck 用。
 
 ```json
-{ "status": "ok", "project": "disaster-viz" }
+{ "status": "healthy" }
 ```
 
 ### `GET /earthquakes`
 
-查询参数：
-
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `limit` | 100 | 返回条数 |
+| `limit` | 100 | 返回条数（1–20000） |
 | `min_magnitude` | 2.5 | 最小震级 |
+| `max_magnitude` | 无 | 最大震级 |
+| `days` | 无 | 只取最近 N 天（1–365） |
 
 返回：
 
@@ -105,16 +132,42 @@ npm run dev
 }
 ```
 
+交互式文档：`http://localhost:8000/docs`
+
 ## 路线图
 
 - [x] **W1** FastAPI 接入 USGS，浏览器可见 JSON
 - [x] **W2** React + Leaflet 地图打点
-- [ ] **W3** 交互完善（筛选 / 时间范围）+ Docker 化（`docker compose up` 一键起）
+- [x] **W3** 交互完善（时间窗口 / 震级筛选 / 详情链接）+ Docker 化
+  - [ ] 待办：Docker 环境跑通 `docker compose up`（见下方「已知问题」）
 - [ ] **W4** PostgreSQL / PostGIS 落库 + 文档
 - [ ] 第二版：接入 NASA FIRMS 野火数据
 - [ ] 第三版：北欧 / 加拿大区域多灾种数据（雪崩 / 冻土）
+
+## 已知问题
+
+### 1. WSL 里地图底图可能加载不出来
+
+OSM 瓦片域名在 WSL 内被 DNS 解析到错误 IP（连 Facebook 的 IPv6 段），表现为地图灰底、没有任何瓦片。后端接口不受影响（USGS 直连正常）。
+
+诊断：
+
+```bash
+source venv/bin/activate && python scripts/net_check.py
+```
+
+绕行方案（任选）：
+
+- **在 Windows 浏览器里打开页面**，改在 Windows 侧验证瓦片；
+- 给 WSL 配可用的 DNS（`/etc/wsl.conf` 中 `generateResolvConf=false` + 自定义 nameserver），或用 VPN 的 TUN 模式；
+- 换用离线底图或自建瓦片服务（长期方案，但超出第一版范围）。
+
+### 2. Docker 尚未安装
+
+W3 的镜像/编排文件已就绪，但本机 WSL 里还没有 Docker。安装见 `scripts/docker-install-one-time.ps1`（Windows 管理员 PowerShell 执行 Docker Desktop），装完后在 Settings → Resources → WSL Integration 里启用 Ubuntu-24.04。
 
 ## 开发备注
 
 - GitHub 推送使用 Personal Access Token（不认密码）。
 - 国内网络下 npm registry 建议指向镜像（本项目使用 `registry.npmmirror.com`）。
+- 改完代码后如需同步 Windows 工作区 → WSL，执行 `bash scripts/sync.sh`。

@@ -9,3 +9,6 @@ __pycache__/
 # Node (frontend has its own .gitignore too)
 node_modules/
 dist/
+
+# Docker
+# 注：.dockerignore 会被构建使用，必须提交
