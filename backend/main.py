@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
 
+from backend import db
 from backend.web import DIST_DIR
 
 app = FastAPI(title="Disaster Viz API")
@@ -68,6 +69,15 @@ def health():
     return {"status": "healthy"}
 
 
+async def _fetch_from_usgs(params: dict) -> list[dict]:
+    """从 USGS 拉取并 normalize，供 /earthquakes 和 /sync 复用。"""
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(USGS_URL, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+    return [normalize(f) for f in data.get("features", [])]
+
+
 @app.get("/earthquakes")
 async def get_earthquakes(
     limit: int = Query(100, ge=1, le=20000),
@@ -75,29 +85,72 @@ async def get_earthquakes(
     max_magnitude: float | None = Query(None, ge=0, le=10),
     days: int | None = Query(None, ge=1, le=365, description="只取最近 N 天"),
 ):
-    """从 USGS 拉取地震事件。
+    """读取地震事件：数据库优先，回源 USGS 兜底。
 
-    参数直接透传给 USGS，由数据源端过滤 —— 不要拉全量到本地再筛，
-    那会把网络和内存成本放大几个数量级。
+    W4 起，数据走 PostGIS。逻辑如下：
+      1) 查数据库；若有数据直接用（命中即返回，并标注 source="db"）。
+      2) 数据库为空（首次启动/没触发过 sync）→ 回源 USGS，
+         并顺手把结果写库（此后 DB 不再空），返回 source="usgs"。
+      3) 两者都失败 → 抛错，不吞异常。
+    """
+    try:
+        rows = await db.fetch_earthquakes(limit, min_magnitude, max_magnitude, days)
+        if rows:
+            return {"count": len(rows), "source": "db", "earthquakes": rows}
+
+        # DB 命中但为空（可能是刚建库，或筛选条件把数据筛没了）。
+        # 回源 USGS 拿一份，并顺手写库。
+        params = {
+            "format": "geojson",
+            "limit": limit,
+            "minmagnitude": min_magnitude,
+            "orderby": "time",
+        }
+        if max_magnitude is not None:
+            params["maxmagnitude"] = max_magnitude
+        if days is not None:
+            params["starttime"] = f"now-{days}days"
+
+        features = await _fetch_from_usgs(params)
+        await db.upsert_earthquakes(features)
+        return {"count": len(features), "source": "usgs", "earthquakes": features}
+    except Exception as exc:
+        # 数据库不可达时，退化为纯回源模式，保证 API 可用。
+        # （W4 的容错设计：DB 是增强，不是单点依赖。）
+        params = {
+            "format": "geojson",
+            "limit": limit,
+            "minmagnitude": min_magnitude,
+            "orderby": "time",
+        }
+        if max_magnitude is not None:
+            params["maxmagnitude"] = max_magnitude
+        if days is not None:
+            params["starttime"] = f"now-{days}days"
+        features = await _fetch_from_usgs(params)
+        return {"count": len(features), "source": "usgs-fallback", "earthquakes": features}
+
+
+@app.post("/sync")
+async def sync_earthquakes(
+    limit: int = Query(200, ge=1, le=20000),
+    min_magnitude: float = Query(2.5, ge=-1, le=10),
+):
+    """手动触发一次数据落库：拉 USGS 近 30 天数据写进 PostGIS。
+
+    为什么手动而不是定时：W4 先把「写库」这条链路跑通、可验证；
+    定时调度（cron/APScheduler）是之后的进阶，避免一次引入太多面。
     """
     params = {
         "format": "geojson",
         "limit": limit,
         "minmagnitude": min_magnitude,
         "orderby": "time",
+        "starttime": "now-30days",
     }
-    if max_magnitude is not None:
-        params["maxmagnitude"] = max_magnitude
-    if days is not None:
-        params["starttime"] = f"now-{days}days"
-
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(USGS_URL, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-
-    features = [normalize(f) for f in data.get("features", [])]
-    return {"count": len(features), "earthquakes": features}
+    features = await _fetch_from_usgs(params)
+    written = await db.upsert_earthquakes(features)
+    return {"fetched": len(features), "written": written}
 
 
 # 静态资源挂载：只挂子路径，不占用根路径。

@@ -15,13 +15,13 @@ ENV PIP_NO_CACHE_DIR=1 PYTHONDONTWRITEBYTECODE=1
 COPY requirements.txt .
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip \
-    && /opt/venv/bin/pip install -r requirements.txt
+    && /opt/venv/bin/pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
 # ---------- 前端构建 ----------
 FROM node:22-alpine AS frontend-build
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+RUN npm ci --registry=https://registry.npmmirror.com
 COPY frontend/ ./
 # 相对路径 -> 前端和后端同源，无需 CORS，也不写死主机名
 ENV VITE_API_BASE=""

@@ -1,9 +1,10 @@
-# 本地开发只需要一条命令：docker compose up
-# 浏览器访问 http://localhost:8000 —— 前端静态资源和 API 由同一个容器提供。
+# W4：双服务编排。app 依赖 db（PostgreSQL + PostGIS）。
+# 一条命令：docker compose up --build
+# 浏览器访问 http://localhost:8000 —— 前端静态资源和 API 由 app 容器提供，
+# 数据落到 db 容器（PostGIS）。
 #
-# 注意：这里是「单容器」编排，不是微服务拆分。
-# W3 的目标是先把"一键起"跑通；等到 W4 接 PostgreSQL 时，
-# 才会出现第二个服务（db），那时才能体现 compose 的真正价值。
+# 数据持久化：db 用 named volume（pgdata）挂载，容器重建数据不丢。
+# 首次启动后调用一次 POST /sync 落库，之后 /earthquakes 就命中数据库。
 
 services:
   app:
@@ -14,4 +15,33 @@ services:
     container_name: disaster-viz-app
     ports:
       - "8000:8000"
+    environment:
+      # 注入数据库连接串，覆盖 db.py 里的 localhost 默认值。
+      # host 是 compose 服务名 db（容器网络内互通）。
+      DATABASE_URL: postgresql://disaster:disaster@db:5432/disaster_viz
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
+
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: disaster-viz-db
+    environment:
+      POSTGRES_USER: disaster
+      POSTGRES_PASSWORD: disaster
+      POSTGRES_DB: disaster_viz
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # 映射出来方便本地 psql 调试；生产可去掉。
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U disaster -d disaster_viz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:

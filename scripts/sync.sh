@@ -6,9 +6,16 @@ set -euo pipefail
 SRC=/mnt/d/OpenClaw/workspace/projects/disaster-viz
 DST="$HOME/disaster-viz"
 
+# 先检查换行符：在 Windows 上编辑的脚本若带 CRLF，在 WSL 里执行会报
+# "$'\r': command not found"。写入时统一用 LF，这里只做提醒。
+if grep -rlI $'\r' "$SRC/scripts" 2>/dev/null; then
+  echo "[WARN] 上面这些脚本含 CRLF，执行前先 dos2unix"
+fi
+
 FILES=(
   backend/main.py
   backend/web.py
+  backend/db.py
   backend/__init__.py
   frontend/src/App.jsx
   frontend/src/App.css
@@ -19,6 +26,13 @@ FILES=(
   .dockerignore
   requirements.txt
   scripts/net_check.py
+  scripts/smoke_test.py
+  scripts/probe_routes.py
+  scripts/debug_mount.sh
+  scripts/git_commit_w3.sh
+  scripts/push.sh
+  scripts/check-proxy.ps1
+  README.md
 )
 
 mkdir -p "$DST/backend" "$DST/frontend/src" "$DST/scripts"

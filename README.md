@@ -17,19 +17,20 @@
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Python 3.12 + FastAPI + httpx |
+| 后端 | Python 3.12 + FastAPI + httpx + psycopg |
 | 前端 | React 19 + Vite + Leaflet / react-leaflet |
-| 数据 | USGS Earthquake API（免注册） |
-| 容器 | Docker 多阶段构建 + docker compose |
+| 数据 | USGS Earthquake API（免注册）+ PostgreSQL / PostGIS |
+| 容器 | Docker 多阶段构建 + docker compose（双服务：app + db） |
 
-**架构为「数据源 → 后端 → 地图」**。第二版接入 NASA FIRMS 野火数据时，只需替换 / 新增一个 adapter，后端接口与前端地图无需改动。
+**架构为「数据源 → 后端 → 地图」**。第二版接入 NASA FIRMS 野火数据时，只需替换 / 新增一个 adapter，后端接口与前端地图无需改动。地震数据已落 PostGIS，支持空间距离查询（`ST_Distance` / `ST_DWithin`）。
 
 ## 目录结构
 
 ```
 disaster-viz/
 ├── backend/
-│   ├── main.py             # FastAPI 应用：/ /health /earthquakes + 静态挂载
+│   ├── main.py             # FastAPI 应用：/ /health /earthquakes /sync + 静态挂载
+│   ├── db.py               # PostgreSQL/PostGIS 数据访问层（连接池 + 建表 + upsert + 查询）
 │   └── web.py              # 前端构建产物路径（DIST_DIR）
 ├── frontend/               # React 前端
 │   ├── src/
@@ -132,6 +133,23 @@ source venv/bin/activate && uvicorn backend.main:app --port 8000
 }
 ```
 
+> W4 起，`/earthquakes` 优先读数据库（字段 `source` = `db`）；数据库为空或不可达时回退到 USGS 实时源（`source` = `usgs` / `usgs-fallback`），保证 API 可用性。
+
+### `POST /sync`
+
+手动触发一次数据落库：从 USGS 拉近 30 天数据写入 PostGIS。
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `limit` | 200 | 拉取条数（1–20000） |
+| `min_magnitude` | 2.5 | 最小震级 |
+
+```bash
+curl -X POST "http://localhost:8000/sync?limit=100&min_magnitude=2.5"
+```
+
+返回 `{"fetched": 100, "written": 100}`。之后 `/earthquakes` 就命中数据库。
+
 交互式文档：`http://localhost:8000/docs`
 
 ## 路线图
@@ -140,7 +158,8 @@ source venv/bin/activate && uvicorn backend.main:app --port 8000
 - [x] **W2** React + Leaflet 地图打点
 - [x] **W3** 交互完善（时间窗口 / 震级筛选 / 详情链接）+ Docker 化
   - 容器已实跑验证（2026-10-24）：镜像 220 MB，healthcheck healthy，非 root 用户，全链路 4/4 通过
-- [ ] **W4** PostgreSQL / PostGIS 落库 + 文档
+- [x] **W4** PostgreSQL / PostGIS 落库 + 文档
+  - 已实跑验证（2026-10-26）：双容器（app + db），POST /sync 拉 100 条写库，/earthquakes 命中 DB（source=db），ST_Distance 空间查询通过
 - [ ] 第二版：接入 NASA FIRMS 野火数据
 - [ ] 第三版：北欧 / 加拿大区域多灾种数据（雪崩 / 冻土）
 
@@ -164,9 +183,11 @@ source venv/bin/activate && python scripts/net_check.py
 
 ### 2. Docker 镜像拉取需要镜像加速
 
-Docker Hub 直连超时。Docker Desktop → Settings → Docker Engine 里配置了 `registry-mirrors`（DaoCloud / 1ms.run / dockerproxy.net）。镜像站可用性会变，拉不下来时跑 `scripts/test-registry.ps1` 排查。
+Docker Hub 直连超时。`~/.docker/daemon.json` 里配置了 `registry-mirrors`（顺序：`docker.1ms.run` → `DaoCloud` → `dockerproxy.net`）。
 
-注意：Docker Desktop 不读系统 `HTTP_PROXY` 环境变量，它有自己的代理设置。
+实测结论（2026-10-26）：**`docker.1ms.run` 对 postgis 等冷门镜像有缓存，是唯一能拉到的源**；DaoCloud 对 postgis 无缓存会卡死；`dockerproxy.net` 直连超时。
+
+关键镜像 tag 记录：`postgis/postgis:16-3.4`（853 MB）可通过 `docker.1ms.run/postgis/postgis:16-3.4` 拉到，再打本地 tag 成标准名供 compose 使用。
 
 ### 3. Docker 数据目录仍在 C 盘
 
