@@ -65,6 +65,35 @@ body {
 .badge.error { background: #7f1d1d; color: #fee2e2; }
 .badge.loading { background: #1e40af; color: #dbeafe; }
 
+/* ---- 数据源切换 tab ---- */
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.tab {
+  background: #0f172a;
+  color: #94a3b8;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 6px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.tab:hover {
+  color: #e2e8f0;
+  border-color: #475569;
+}
+
+.tab.active {
+  background: #1e40af;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
 /* ---- 筛选栏 ---- */
 .filters {
   display: flex;

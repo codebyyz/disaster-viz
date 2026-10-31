@@ -44,6 +44,29 @@ def main() -> int:
             )
         )
 
+        # 第二版：野火接口。
+        # 没配 FIRMS_MAP_KEY 时应当返回 400（而不是 500 / 崩掉），
+        # 且不影响地震接口——这正是容错设计要验证的点。
+        r = c.get("/fires", params={"days": 1})
+        if r.status_code == 200:
+            data = r.json()
+            results.append(
+                check(
+                    "GET /fires 返回数据",
+                    data.get("count", 0) > 0,
+                    f"count={data.get('count')}",
+                )
+            )
+        else:
+            # 400 = 未配 key（预期路径）；502 = 上游不可达。
+            results.append(
+                check(
+                    "GET /fires 降级正确（未配 key → 400）",
+                    r.status_code == 400,
+                    f"HTTP {r.status_code}",
+                )
+            )
+
     print(f"\n{sum(results)}/{len(results)} passed")
     return 0 if all(results) else 1
 

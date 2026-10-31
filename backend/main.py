@@ -7,13 +7,14 @@
 生产 / Docker（单端口）：
     前端已构建到 frontend/dist 时，后端会把它挂到根路径，只需访问 :8000
 """
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
 
 from backend import db
+from backend import firms
 from backend.web import DIST_DIR
 
 app = FastAPI(title="Disaster Viz API")
@@ -129,6 +130,32 @@ async def get_earthquakes(
             params["starttime"] = f"now-{days}days"
         features = await _fetch_from_usgs(params)
         return {"count": len(features), "source": "usgs-fallback", "earthquakes": features}
+
+
+@app.get("/fires")
+async def get_fires(
+    days: int = Query(1, ge=1, le=5, description="最近 N 天（FIRMS 上限 5 天）"),
+    sensor: str | None = Query(None, description="传感器，如 VIIRS_NOAA21_NRT"),
+):
+    """读取野火热点：从 NASA FIRMS 拉 CSV 并 normalize。
+
+    第二版新增的第二个数据源。与 /earthquakes 不同点：
+      - 需要 MAP_KEY（FIRMS_MAP_KEY 环境变量）
+      - 返回 CSV，在 firms.py 里解析
+      - 暂不落库（数据量大、变化快，落库留给第三版统一设计 schema）
+    """
+    try:
+        fires = await firms.fetch_fires(days=days, sensor=sensor)
+        return {"count": len(fires), "source": "firms", "fires": fires}
+    except RuntimeError as exc:
+        # 配置问题（缺 MAP_KEY）→ 400。前端据此提示「去填 key」。
+        raise HTTPException(status_code=400, detail=str(exc))
+    except httpx.HTTPError as exc:
+        # 上游 FIRMS 不可达 / 报错 → 502。跟 400 区分开，
+        # 便于前端和排障时判断是「配置没填」还是「网络/上游挂了」。
+        raise HTTPException(
+            status_code=502, detail=f"NASA FIRMS 请求失败：{exc}"
+        )
 
 
 @app.post("/sync")

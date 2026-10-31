@@ -16,12 +16,14 @@ FILES=(
   backend/main.py
   backend/web.py
   backend/db.py
+  backend/firms.py
   backend/__init__.py
   frontend/src/App.jsx
   frontend/src/App.css
   frontend/vite.config.js
   Dockerfile
   docker-compose.yml
+  .env.example
   .gitignore
   .dockerignore
   requirements.txt

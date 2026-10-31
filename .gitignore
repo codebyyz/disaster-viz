@@ -10,5 +10,8 @@ __pycache__/
 node_modules/
 dist/
 
+# 环境变量（可能含 API key，绝不能提交）
+.env
+
 # Docker
 # 注：.dockerignore 会被构建使用，必须提交

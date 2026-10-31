@@ -19,6 +19,9 @@ services:
       # 注入数据库连接串，覆盖 db.py 里的 localhost 默认值。
       # host 是 compose 服务名 db（容器网络内互通）。
       DATABASE_URL: postgresql://disaster:disaster@db:5432/disaster_viz
+      # FIRMS Map Key（野火数据）。compose 自动从宿主机 .env 读同名变量；
+      # 没配时 /fires 返回 400，地震功能不受影响。
+      FIRMS_MAP_KEY: ${FIRMS_MAP_KEY:-}
     depends_on:
       db:
         condition: service_healthy

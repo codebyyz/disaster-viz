@@ -19,18 +19,19 @@
 |----|------|
 | 后端 | Python 3.12 + FastAPI + httpx + psycopg |
 | 前端 | React 19 + Vite + Leaflet / react-leaflet |
-| 数据 | USGS Earthquake API（免注册）+ PostgreSQL / PostGIS |
+| 数据 | USGS Earthquake API（免注册）+ NASA FIRMS 野火（需免费 MAP_KEY）+ PostgreSQL / PostGIS |
 | 容器 | Docker 多阶段构建 + docker compose（双服务：app + db） |
 
-**架构为「数据源 → 后端 → 地图」**。第二版接入 NASA FIRMS 野火数据时，只需替换 / 新增一个 adapter，后端接口与前端地图无需改动。地震数据已落 PostGIS，支持空间距离查询（`ST_Distance` / `ST_DWithin`）。
+**架构为「数据源 → 后端 → 地图」**。每个数据源一个 adapter（`backend/firms.py` 就是野火 adapter），后端接口与前端地图复用同一套结构；新增数据源 = 新增 adapter + 一个路由。地震数据已落 PostGIS，支持空间距离查询（`ST_Distance` / `ST_DWithin`）；野火数据当前实时透传（数据量大、变化快，落库留给第三版统一 schema）。
 
 ## 目录结构
 
 ```
 disaster-viz/
 ├── backend/
-│   ├── main.py             # FastAPI 应用：/ /health /earthquakes /sync + 静态挂载
+│   ├── main.py             # FastAPI 应用：/ /health /earthquakes /fires /sync + 静态挂载
 │   ├── db.py               # PostgreSQL/PostGIS 数据访问层（连接池 + 建表 + upsert + 查询）
+│   ├── firms.py            # NASA FIRMS 野火 adapter（CSV 解析 + normalize）
 │   └── web.py              # 前端构建产物路径（DIST_DIR）
 ├── frontend/               # React 前端
 │   ├── src/
@@ -52,6 +53,13 @@ disaster-viz/
 
 ### 方式 A：Docker（推荐，一条命令）
 
+先准备野火 key（可选，不做野火可跳过）：
+
+```bash
+cp .env.example .env
+# 编辑 .env，填入 FIRMS_MAP_KEY（去 https://firms.modaps.eosdis.nasa.gov/api/map_key 免费注册）
+```
+
 ```bash
 cd ~/disaster-viz
 docker compose up --build
@@ -70,6 +78,7 @@ docker compose up --build
 ```bash
 cd ~/disaster-viz
 source venv/bin/activate
+set -a; source .env; set +a      # 加载 FIRMS_MAP_KEY（没有 .env 可跳过）
 uvicorn backend.main:app --reload
 ```
 
@@ -135,6 +144,43 @@ source venv/bin/activate && uvicorn backend.main:app --port 8000
 
 > W4 起，`/earthquakes` 优先读数据库（字段 `source` = `db`）；数据库为空或不可达时回退到 USGS 实时源（`source` = `usgs` / `usgs-fallback`），保证 API 可用性。
 
+### `GET /fires`
+
+NASA FIRMS 野火热点（第二版新增）。**需要 `FIRMS_MAP_KEY` 环境变量**。
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `days` | 1 | 最近 N 天（1–5，FIRMS 硬限制） |
+| `sensor` | `VIIRS_NOAA21_NRT` | 传感器源，可换 `VIIRS_NOAA20_NRT` / `MODIS_NRT` |
+
+返回：
+
+```json
+{
+  "count": 1200,
+  "source": "firms",
+  "fires": [
+    {
+      "id": "-12.34,45.67|2026-10-31|NOAA-21|0745",
+      "bright_ti4": 342.1,
+      "frp": 12.4,
+      "confidence": "n",
+      "satellite": "NOAA-21",
+      "instrument": "VIIRS",
+      "daynight": "D",
+      "time": "2026-10-31T07:45:00Z",
+      "lon": 45.67,
+      "lat": -12.34
+    }
+  ]
+}
+```
+
+错误码：`400` = 没配 `FIRMS_MAP_KEY`；`502` = 上游 FIRMS 不可达。
+
+> 与 USGS 的关键差异：FIRMS 返回 **CSV** 不是 JSON，URL 是路径式
+> （`/api/area/csv/{KEY}/{SOURCE}/world/{DAYS}`），解析逻辑独立在 `backend/firms.py`。
+
 ### `POST /sync`
 
 手动触发一次数据落库：从 USGS 拉近 30 天数据写入 PostGIS。
@@ -160,7 +206,8 @@ curl -X POST "http://localhost:8000/sync?limit=100&min_magnitude=2.5"
   - 容器已实跑验证（2026-10-24）：镜像 220 MB，healthcheck healthy，非 root 用户，全链路 4/4 通过
 - [x] **W4** PostgreSQL / PostGIS 落库 + 文档
   - 已实跑验证（2026-10-26）：双容器（app + db），POST /sync 拉 100 条写库，/earthquakes 命中 DB（source=db），ST_Distance 空间查询通过
-- [ ] 第二版：接入 NASA FIRMS 野火数据
+- [x] **第二版**：接入 NASA FIRMS 野火数据（2026-11-01）
+  - `backend/firms.py` adapter + `GET /fires` + 前端 tab 切换；未配 key 时 400 降级，不影响地震功能
 - [ ] 第三版：北欧 / 加拿大区域多灾种数据（雪崩 / 冻土）
 
 ## 已知问题
