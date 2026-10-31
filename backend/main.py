@@ -15,6 +15,7 @@ import httpx
 
 from backend import db
 from backend import firms
+from backend import fires_demo
 from backend.web import DIST_DIR
 
 app = FastAPI(title="Disaster Viz API")
@@ -135,6 +136,7 @@ async def get_earthquakes(
 @app.get("/fires")
 async def get_fires(
     days: int = Query(1, ge=1, le=5, description="最近 N 天（FIRMS 上限 5 天）"),
+    limit: int = Query(3000, ge=1, le=20000, description="最多返回条数（保护浏览器）"),
     sensor: str | None = Query(None, description="传感器，如 VIIRS_NOAA21_NRT"),
 ):
     """读取野火热点：从 NASA FIRMS 拉 CSV 并 normalize。
@@ -143,10 +145,20 @@ async def get_fires(
       - 需要 MAP_KEY（FIRMS_MAP_KEY 环境变量）
       - 返回 CSV，在 firms.py 里解析
       - 暂不落库（数据量大、变化快，落库留给第三版统一设计 schema）
+
+    为什么要 limit：FIRMS 全球单日热点可达数万条，全量给 Leaflet
+    会让浏览器渲染卡死。超出 limit 时按亮温降序取前 N ——
+    保留最强的火点，丢弃低价值背景热异常，比随机截断有意义。
     """
     try:
-        fires = await firms.fetch_fires(days=days, sensor=sensor)
-        return {"count": len(fires), "source": "firms", "fires": fires}
+        if fires_demo.DEMO_ENABLED:
+            # 演示模式：无 key 也能跑通整条链，用于验收/截图。
+            # 响应里 source 标识为 firms-demo，前端会明确提示是演示数据。
+            fires = fires_demo.demo_fires(days=days)
+            source_label = "firms-demo"
+        else:
+            fires = await firms.fetch_fires(days=days, sensor=sensor)
+            source_label = "firms"
     except RuntimeError as exc:
         # 配置问题（缺 MAP_KEY）→ 400。前端据此提示「去填 key」。
         raise HTTPException(status_code=400, detail=str(exc))
@@ -156,6 +168,20 @@ async def get_fires(
         raise HTTPException(
             status_code=502, detail=f"NASA FIRMS 请求失败：{exc}"
         )
+
+    total = len(fires)
+    if total > limit:
+        # None 亮温排最后（不应把缺值的当最强）。
+        fires.sort(key=lambda f: f.get("bright_ti4") or 0, reverse=True)
+        fires = fires[:limit]
+
+    return {
+        "count": len(fires),
+        "total": total,
+        "sampled": total > limit,
+        "source": source_label,
+        "fires": fires,
+    }
 
 
 @app.post("/sync")

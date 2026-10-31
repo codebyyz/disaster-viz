@@ -94,15 +94,23 @@ function radiusForFire(bright) {
 function App() {
   const [source, setSource] = useState('earthquakes')
   const [data, setData] = useState([])
+  const [meta, setMeta] = useState({ total: null, sampled: false, demo: false })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
 
-  // 各地震筛选状态
+  // 地震筛选状态
   const [days, setDays] = useState(7)
   const [minMag, setMinMag] = useState(2.5)
+  // 野火筛选状态单独存 —— 两个源的可选范围不同（地震到 90 天，
+  // 野火最多 5 天）。共用一个 days 会导致切 tab 时 select 显示空值、
+  // 并发出超范围的请求。分开存是最省心且行为正确的做法。
+  const [fireDays, setFireDays] = useState(1)
 
   const cfg = SOURCES[source]
+  // 当前源实际生效的时间窗口，统一取一个变量供请求与 select 使用。
+  const activeDays = source === 'earthquakes' ? days : fireDays
+  const setActiveDays = source === 'earthquakes' ? setDays : setFireDays
 
   // 切换数据源时清空选中的点，避免残留高亮。
   useEffect(() => {
@@ -128,7 +136,12 @@ function App() {
           })
         } else {
           // 野火：只透传 days；sensor 交给后端默认值。
-          const params = new URLSearchParams({ days: String(days) })
+          // limit 让后端做降采样保护 —— FIRMS 全球单日热点可达数万条，
+          // 全量传给 Leaflet 会把浏览器卡死。
+          const params = new URLSearchParams({
+            days: String(fireDays),
+            limit: '3000',
+          })
           res = await fetch(`${API_BASE}${cfg.endpoint}?${params}`, {
             signal: controller.signal,
           })
@@ -146,6 +159,12 @@ function App() {
         }
         const json = await res.json()
         setData(json[cfg.dataKey] || [])
+        // FIRMS 数据量大时后端会降采样，把总量与采样标记交给 UI 提示。
+        setMeta({
+          total: json.total ?? null,
+          sampled: Boolean(json.sampled),
+          demo: json.source === 'firms-demo',
+        })
       } catch (err) {
         // 切换筛选时上一次请求会被 abort，这不是错误，忽略。
         if (err.name === 'AbortError') return
@@ -157,7 +176,7 @@ function App() {
 
     fetchData()
     return () => controller.abort()
-  }, [source, days, minMag, cfg.endpoint, cfg.dataKey])
+  }, [source, days, fireDays, minMag, cfg.endpoint, cfg.dataKey])
 
   // 统计信息：地震看最强震/平均深度；野火看最高亮温/平均 FRP。
   const stats = useMemo(() => {
@@ -208,10 +227,14 @@ function App() {
             <p className="subtitle">{cfg.subtitle}</p>
           </div>
           <div className="status">
+            {meta.demo && <span className="badge demo">演示数据</span>}
             {loading && <span className="badge loading">加载中…</span>}
             {error && <span className="badge error">错误：{error}</span>}
             {!loading && !error && (
-              <span className="badge ok">共 {data.length} 条</span>
+              <span className="badge ok">
+                共 {data.length} 条
+                {meta.sampled && meta.total ? ` / ${meta.total}（已按强度取前 ${data.length}）` : ''}
+              </span>
             )}
           </div>
         </div>
@@ -232,7 +255,7 @@ function App() {
         <div className="filters">
           <label className="filter">
             时间窗口
-            <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            <select value={activeDays} onChange={(e) => setActiveDays(Number(e.target.value))}>
               {(source === 'earthquakes' ? EQ_DAY_OPTIONS : FIRE_DAY_OPTIONS).map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -343,7 +366,9 @@ function App() {
         <span>
           {source === 'earthquakes'
             ? '数据来源：USGS Earthquake API'
-            : '数据来源：NASA FIRMS'}
+            : meta.demo
+              ? '数据来源：NASA FIRMS（演示数据，未接入真实 key）'
+              : '数据来源：NASA FIRMS'}
         </span>
         {source === 'earthquakes' ? (
           <span className="legend">

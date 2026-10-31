@@ -32,6 +32,7 @@ disaster-viz/
 │   ├── main.py             # FastAPI 应用：/ /health /earthquakes /fires /sync + 静态挂载
 │   ├── db.py               # PostgreSQL/PostGIS 数据访问层（连接池 + 建表 + upsert + 查询）
 │   ├── firms.py            # NASA FIRMS 野火 adapter（CSV 解析 + normalize）
+│   ├── fires_demo.py       # 演示数据（无 key 时的验收/截图用，FIRMS_DEMO=1 启用）
 │   └── web.py              # 前端构建产物路径（DIST_DIR）
 ├── frontend/               # React 前端
 │   ├── src/
@@ -151,13 +152,20 @@ NASA FIRMS 野火热点（第二版新增）。**需要 `FIRMS_MAP_KEY` 环境�
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `days` | 1 | 最近 N 天（1–5，FIRMS 硬限制） |
+| `limit` | 3000 | 最多返回条数（1–20000） |
 | `sensor` | `VIIRS_NOAA21_NRT` | 传感器源，可换 `VIIRS_NOAA20_NRT` / `MODIS_NRT` |
+
+**为什么要 limit**：FIRMS 全球单日热点可达数万条，全量丢给 Leaflet 会卡死浏览器。
+超出 `limit` 时**按亮温降序取前 N**——保留最强的火点，丢弃低价值背景热异常。
+响应里的 `total` 是采样前总数，`sampled` 标记是否发生过降采样。
 
 返回：
 
 ```json
 {
-  "count": 1200,
+  "count": 3000,
+  "total": 48210,
+  "sampled": true,
   "source": "firms",
   "fires": [
     {
@@ -177,6 +185,10 @@ NASA FIRMS 野火热点（第二版新增）。**需要 `FIRMS_MAP_KEY` 环境�
 ```
 
 错误码：`400` = 没配 `FIRMS_MAP_KEY`；`502` = 上游 FIRMS 不可达。
+
+**演示模式**：没拿到 key 也想过一下页面，设 `FIRMS_DEMO=1` 启动，
+`/fires` 会返回一组样例热点（`source` 为 `firms-demo`，页面顶部显示
+「演示数据」徽标），用于验收与截图，不会冒充真实数据。
 
 > 与 USGS 的关键差异：FIRMS 返回 **CSV** 不是 JSON，URL 是路径式
 > （`/api/area/csv/{KEY}/{SOURCE}/world/{DAYS}`），解析逻辑独立在 `backend/firms.py`。
@@ -208,6 +220,8 @@ curl -X POST "http://localhost:8000/sync?limit=100&min_magnitude=2.5"
   - 已实跑验证（2026-10-26）：双容器（app + db），POST /sync 拉 100 条写库，/earthquakes 命中 DB（source=db），ST_Distance 空间查询通过
 - [x] **第二版**：接入 NASA FIRMS 野火数据（2026-11-01）
   - `backend/firms.py` adapter + `GET /fires` + 前端 tab 切换；未配 key 时 400 降级，不影响地震功能
+  - 数据量保护：超出 `limit` 按亮温降序取 Top N（保留最强火点），`total`/`sampled` 如实上报
+  - 演示模式 `FIRMS_DEMO=1`：无 key 也能演示，页面标注「演示数据」
 - [ ] 第三版：北欧 / 加拿大区域多灾种数据（雪崩 / 冻土）
 
 ## 已知问题

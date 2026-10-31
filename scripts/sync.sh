@@ -17,6 +17,7 @@ FILES=(
   backend/web.py
   backend/db.py
   backend/firms.py
+  backend/fires_demo.py
   backend/__init__.py
   frontend/src/App.jsx
   frontend/src/App.css
@@ -29,6 +30,8 @@ FILES=(
   requirements.txt
   scripts/net_check.py
   scripts/smoke_test.py
+  scripts/verify_static.sh
+  scripts/commit_v2.sh
   scripts/probe_routes.py
   scripts/debug_mount.sh
   scripts/git_commit_w3.sh

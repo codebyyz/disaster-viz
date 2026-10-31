@@ -64,6 +64,7 @@ body {
 .badge.ok { background: #166534; color: #dcfce7; }
 .badge.error { background: #7f1d1d; color: #fee2e2; }
 .badge.loading { background: #1e40af; color: #dbeafe; }
+.badge.demo { background: #78350f; color: #fef3c7; }
 
 /* ---- 数据源切换 tab ---- */
 .tabs {
